@@ -22,7 +22,7 @@ import {
   BarChart3,
   LineChart as LineChartIcon,
 } from "lucide-react";
-import { getRebalanceHistory, getRebalanceDetail } from "../api/RebalanceApi";
+import { getRebalanceHistory, getRebalanceDetail } from "../api/StrategyApi";
 import { getDashboard } from "../api/AccountApi";
 import type { RebalanceHistoryItem, RebalanceDetailDto } from "../types/Rebalance";
 import type { AccountDashboardDto } from "../types/Account";
