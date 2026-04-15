@@ -1,6 +1,6 @@
 import client from "./client";
-import type { OrderDto } from "../types/order";
-import type { KillSwitchResponse } from "../types/safety";
+import type { OrderDto } from "../types/Order";
+import type { KillSwitchResponse } from "../types/Safety";
 
 // ─── 주문 유형 정규화 ───
 type OrderType = "market" | "limit" | "conditional";
@@ -28,12 +28,13 @@ export async function buyDomesticStock(
   quantity: number,
   orderType: string,
   price: number,
+  dryRun: boolean = false,
 ) {
   const normalized = normalizeOrderType(orderType);
   const orderPrice = normalized === "market" ? 0 : price;
 
   return client.post<string>("/order/domestic-stock/buy", null, {
-    params: { stock_code: stockCode, quantity, order_type: normalized, price: orderPrice },
+    params: { stock_code: stockCode, quantity, order_type: normalized, price: orderPrice, dry_run: dryRun },
   });
 }
 
@@ -43,19 +44,24 @@ export async function sellDomesticStock(
   quantity: number,
   orderType: string,
   price: number,
+  dryRun: boolean = false,
 ) {
   const normalized = normalizeOrderType(orderType);
   const orderPrice = normalized === "market" ? 0 : price;
 
   return client.post<string>("/order/domestic-stock/sell", null, {
-    params: { stock_code: stockCode, quantity, order_type: normalized, price: orderPrice },
+    params: { stock_code: stockCode, quantity, order_type: normalized, price: orderPrice, dry_run: dryRun },
   });
 }
 
 /** 취소 주문 */
-export async function cancelOrder(orderId: string, quantity: number) {
+export async function cancelOrder(
+  orderId: string,
+  quantity: number,
+  dryRun: boolean = false,
+) {
   return client.post<string>("/order/domestic-stock/cancel", null, {
-    params: { order_id: orderId, quantity },
+    params: { order_id: orderId, quantity, dry_run: dryRun },
   });
 }
 
@@ -65,12 +71,13 @@ export async function reviseOrder(
   orderType: string,
   quantity: number,
   price: number,
+  dryRun: boolean = false,
 ) {
   const normalized = normalizeOrderType(orderType);
   const orderPrice = normalized === "market" ? 0 : price;
 
   return client.post<string>("/order/domestic-stock/revise", null, {
-    params: { order_no: orderId, quantity, order_type: normalized, price: orderPrice },
+    params: { order_no: orderId, quantity, order_type: normalized, price: orderPrice, dry_run: dryRun },
   });
 }
 

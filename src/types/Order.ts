@@ -5,6 +5,7 @@ export interface OrderDto {
   account_product_code: string;
   market: string;
   stock_code: string;
+  stock_name: string;
   order_pos: string;
   order_kind: string;
   order_type: string;
