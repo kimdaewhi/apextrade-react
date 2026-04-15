@@ -28,6 +28,7 @@ import {
   getKillSwitchStatus,
   changeKillSwitch,
 } from "../api/OrderApi";
+import { useWsSubscribe } from "../contexts/WebSocketContext";
 import type { OrderDto } from "../types/Order";
 
 type OrderType = "시장가" | "지정가";
@@ -129,6 +130,26 @@ export function OrderPage() {
     fetchKillSwitch();
   }, [fetchOrders, fetchKillSwitch]);
 
+  // ── WebSocket 구독: 주문 업데이트 ──
+  useWsSubscribe("order_updated", useCallback((data: any) => {
+    setOrders((prev) => {
+      const idx = prev.findIndex((o) => o.id === data.id);
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...data };
+      return next;
+    });
+  }, []));
+
+  // ── WebSocket 구독: 주문 생성 ──
+  useWsSubscribe("order_created", useCallback((data: any) => {
+    setOrders((prev) => {
+      // 중복 방지
+      if (prev.some((o) => o.id === data.id)) return prev;
+      return [data, ...prev];
+    });
+  }, []));
+
   // ── 매수/매도 ──
   const handleOrder = async (side: "BUY" | "SELL") => {
     if (!symbol || !quantity) {
@@ -150,7 +171,8 @@ export function OrderPage() {
       setSymbol("");
       setQuantity("");
       setPrice("");
-      await fetchOrders();
+      // WebSocket으로 실시간 갱신되지만, dry_run이면 WS 이벤트가 안 올 수 있으므로 수동 갱신
+      if (dryRun) await fetchOrders();
     } catch (err: any) {
       alert(err.response?.data?.detail || "주문 실패");
     } finally {
@@ -165,7 +187,7 @@ export function OrderPage() {
 
     try {
       await cancelOrder(order.id, order.remaining_qty, dryRun);
-      await fetchOrders();
+      if (dryRun) await fetchOrders();
     } catch (err: any) {
       alert(err.response?.data?.detail || "취소 실패");
     }
@@ -192,7 +214,7 @@ export function OrderPage() {
         dryRun,
       );
       setReviseTarget(null);
-      await fetchOrders();
+      if (dryRun) await fetchOrders();
     } catch (err: any) {
       alert(err.response?.data?.detail || "정정 실패");
     } finally {
@@ -207,7 +229,6 @@ export function OrderPage() {
       await changeKillSwitch(true);
       setIsKillSwitchActive(true);
       setShowKillSwitchConfirm(false);
-      await fetchOrders();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Kill Switch 실패");
     } finally {
@@ -457,9 +478,7 @@ export function OrderPage() {
           <Button
             onClick={() => handleOrder("BUY")}
             className={`flex-1 h-12 text-base font-medium text-white ${
-              dryRun
-                ? "bg-sky-400 hover:bg-sky-500"
-                : "bg-sky-600 hover:bg-sky-700"
+              dryRun ? "bg-sky-400 hover:bg-sky-500" : "bg-sky-600 hover:bg-sky-700"
             }`}
             disabled={isKillSwitchActive || submitting}
           >
@@ -468,9 +487,7 @@ export function OrderPage() {
           <Button
             onClick={() => handleOrder("SELL")}
             className={`flex-1 h-12 text-base font-medium text-white ${
-              dryRun
-                ? "bg-rose-400 hover:bg-rose-500"
-                : "bg-rose-600 hover:bg-rose-700"
+              dryRun ? "bg-rose-400 hover:bg-rose-500" : "bg-rose-600 hover:bg-rose-700"
             }`}
             disabled={isKillSwitchActive || submitting}
           >
