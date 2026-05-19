@@ -213,7 +213,7 @@ export function StrategiesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">전략 성과 분석</h1>
+          <h1 className="text-3xl font-bold text-gray-900">전략 성과 분석</h1> 
           <p className="text-gray-600 mt-1">{formatDateTime(detail.executed_at)} 기준</p>
         </div>
         <div className="flex items-center gap-3">
