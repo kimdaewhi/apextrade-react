@@ -255,7 +255,8 @@ export function StrategiesPage() {
                     {metrics.failRate.toFixed(1)}%
                   </p>
                   <p className="text-xs text-gray-500 mt-1">
-                    {metrics.filledCount}/{metrics.signalCount} 종목 체결
+                    {/* {metrics.filledCount}/{metrics.signalCount} 종목 체결 */}
+                    편입 {detail.buy_count} · 유지 {detail.hold_count} · 편출 {detail.sell_count}
                   </p>
                 </div>
                 {metrics.failRate > 0 && <AlertCircle className="text-rose-400" size={24} />}
