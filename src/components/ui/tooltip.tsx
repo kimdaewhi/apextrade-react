@@ -36,7 +36,7 @@ function TooltipTrigger({
 
 function TooltipContent({
   className,
-  sideOffset = 0,
+  sideOffset = 8,
   children,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
@@ -46,13 +46,29 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "bg-primary text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance",
+          // 기본 레이아웃
+          "z-50 max-w-xs origin-(--radix-tooltip-content-transform-origin)",
+          // 색상 & 모양
+          "bg-gray-900 text-white rounded-xl",
+          // 패딩 (토스 스타일: 넉넉하게)
+          "px-4 py-3",
+          // 그림자 (부드럽게)
+          "shadow-lg shadow-black/10",
+          // 타이포그래피 (가독성 우선)
+          "text-[13px] leading-relaxed",
+          // 애니메이션
+          "animate-in fade-in-0 zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "data-[side=bottom]:slide-in-from-top-2",
+          "data-[side=left]:slide-in-from-right-2",
+          "data-[side=right]:slide-in-from-left-2",
+          "data-[side=top]:slide-in-from-bottom-2",
           className,
         )}
         {...props}
       >
         {children}
-        <TooltipPrimitive.Arrow className="bg-primary fill-primary z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
+        <TooltipPrimitive.Arrow className="fill-gray-900" width={10} height={5} />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   );
