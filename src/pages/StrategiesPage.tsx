@@ -2,6 +2,11 @@ import { useEffect, useState, useMemo } from "react";
 import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import {
+  Tooltip as UITooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "../components/ui/tooltip";
+import {
   BarChart,
   Bar,
   XAxis,
@@ -14,6 +19,7 @@ import {
 import {
   TrendingUp,
   TrendingDown,
+  Info,
   Clock,
   AlertCircle,
   Loader2,
@@ -213,9 +219,27 @@ export function StrategiesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">전략 성과 분석</h1> 
-          <p className="text-gray-600 mt-1">{formatDateTime(detail.executed_at)} 기준</p>
+          <h1 className="text-3xl font-bold text-gray-900">전략 성과 분석</h1>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-gray-600">
+              {formatDateTime(detail.executed_at)} 리밸런스 구간
+            </p>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
+                  <Info size={14} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-sm">
+                <p className="font-semibold mb-1.5">리밸런스 구간</p>
+                <p className="text-gray-300 leading-relaxed">한 차례 리밸런싱한 뒤 다음 리밸런싱까지의 기간이에요.</p>
+                <p className="text-gray-300 leading-relaxed">이 기간 동안의 운용 결과만 보여요.</p>
+              </TooltipContent>
+            </UITooltip>
+          </div>
         </div>
+
+        {/* 셀렉터 + 새로고침 버튼 (변경 없음) */}
         <div className="flex items-center gap-3">
           {historyItems.length > 1 && (
             <div className="relative">
@@ -249,26 +273,65 @@ export function StrategiesPage() {
           <div className="grid grid-cols-4 gap-4">
             <Card className="p-6 bg-white shadow-sm">
               <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">편입 실패율</p>
-                  <p className={`text-3xl font-bold mt-2 ${metrics.failRate > 0 ? "text-rose-600" : "text-gray-900"}`}>
-                    {metrics.failRate.toFixed(1)}%
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm text-gray-600">편입 결과</p>
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
+                          <Info size={13} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <p className="font-semibold mb-1.5">편입 결과</p>
+                        <p className="text-gray-300 leading-relaxed">목표 대비 실제 반영된 비율이에요.</p>
+                        <p className="text-gray-300 leading-relaxed mt-1.5">새로 산 종목과 계속 들고이 ㅆ는 종목을 합쳐서 봐요.</p>
+                      </TooltipContent>
+                    </UITooltip>
+                  </div>
+                  
+                  <p className={`text-3xl font-bold mt-2 ${
+                    metrics.failRate > 0 ? "text-rose-600" : "text-gray-900"
+                  }`}>
+                    {detail.buy_count + detail.hold_count} / {detail.buy_signal_count}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {/* {metrics.filledCount}/{metrics.signalCount} 종목 체결 */}
+                  
+                  <p className="text-xs text-gray-500 mt-2">
                     편입 {detail.buy_count} · 유지 {detail.hold_count} · 편출 {detail.sell_count}
                   </p>
                 </div>
-                {metrics.failRate > 0 && <AlertCircle className="text-rose-400" size={24} />}
+                
+                {metrics.failRate > 0 && (
+                  <AlertCircle className="text-rose-400" size={24} />
+                )}
               </div>
             </Card>
 
-            <Card className="p-6 bg-white shadow-sm">
+            {/* <Card className="p-6 bg-white shadow-sm">
               <div>
                 <p className="text-sm text-gray-600">예수금 비율</p>
                 <p className="text-3xl font-bold text-gray-900 mt-2">{metrics.cashRatio.toFixed(1)}%</p>
                 <p className="text-xs text-gray-500 mt-1">₩{formatNumber(metrics.estimatedCashAfter)} 예수금</p>
               </div>
+            </Card> */}
+            <Card className="p-6 bg-white shadow-md">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm text-gray-600">자본 활용도</p>
+                <UITooltip>
+                  <TooltipTrigger asChild>
+                    <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
+                      <Info size={13} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-md">
+                    <p className="font-semibold mb-1.5">자본 활용도</p>
+                    <p className="text-gray-300 leading-relaxed">계좌 전체 자산 중 이 전략의 비중이에요.</p>
+                    <p className="text-gray-300 leading-relaxed mt-1.5">여러 전략을 굴릴 때 자산 배분을 확인할 수 있어요.</p>
+                  </TooltipContent>
+                </UITooltip>
+              </div>
+              <p className="text-3xl font-bold text-gray-300 mt-2">—</p>
+              <p className="text-xs text-gray-400 mt-1">계산 준비 중</p>
             </Card>
 
             <Card className="p-6 bg-white shadow-sm">
