@@ -1,531 +1,1183 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState } from "react";
 import { Card } from "../components/ui/card";
-import { Badge } from "../components/ui/badge";
-import {
-  Tooltip as UITooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "../components/ui/tooltip";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
   Cell,
 } from "recharts";
 import {
+  RefreshCw,
   TrendingUp,
   TrendingDown,
-  Info,
-  Clock,
-  AlertCircle,
-  Loader2,
-  RefreshCw,
-  ChevronDown,
-  BarChart3,
+  Inbox,
   LineChart as LineChartIcon,
 } from "lucide-react";
-import { getRebalanceHistory, getRebalanceDetail, getRebalanceSnapshot } from "../api/StrategyApi";
-import { getDashboard } from "../api/AccountApi";
-import type { RebalanceHistoryItem, RebalanceDetailDto, RebalanceSnapshotDto } from "../types/Rebalance";
-import type { AccountDashboardDto } from "../types/Account";
 
-const formatNumber = (value: string | number) => Number(value).toLocaleString();
-const formatDateTime = (dateStr: string | null) => {
-  if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+/* ════════════════════════════════════════════════
+   타입 — API 응답 스펙
+
+   모든 숫자 필드는 null 을 허용한다.
+   BE 가 값을 못 주는 상황(표본 부족, 집계 실패)과
+   0 을 화면에서 반드시 구분하기 위함.
+   ════════════════════════════════════════════════ */
+
+type Num = number | null;
+
+interface MarketIndex {
+  name: string;
+  value: Num;
+  /** 전일 대비 등락률 */
+  changeRate: Num;
+  /** 전략 기간과 동일한 구간의 수익률 */
+  periodReturn: Num;
+}
+
+interface AccountData {
+  totalAsset: Num;
+  stockValue: Num;
+  cash: Num;
+  cashRatio: Num;
+  purchaseAmount: Num;
+  evalProfit: Num;
+  evalProfitRate: Num;
+}
+
+interface Holding {
+  code: string;
+  name: string;
+  qty: number;
+  avgPrice: Num;
+  currentPrice: Num;
+}
+
+interface StrategyData {
+  startDate: string | null;
+  endDate: string | null;
+  rebalanceCount: Num;
+
+  periodReturn: Num;
+  periodProfit: Num;
+  benchmarkReturn: Num;
+  excessReturn: Num;
+
+  maxDrawdown: Num;
+  mddMaxDays: Num;
+  mddCurrentDays: Num;
+  isRecovered: boolean | null;
+
+  winCount: Num;
+  periodCount: Num;
+  avgWin: Num;
+
+  totalBuyValue: Num;
+  totalSellValue: Num;
+
+  cagr: Num;
+  volatility: Num;
+  sharpeRatio: Num;
+  alpha: Num;
+  turnoverRate: Num;
+  profitFactor: Num;
+}
+
+interface NavPoint {
+  date: string;
+  nav: Num;
+  benchmark: Num;
+}
+
+interface DashboardData {
+  updatedAt: string | null;
+  market: { kospi: MarketIndex | null; kosdaq: MarketIndex | null } | null;
+  account: AccountData | null;
+  holdings: Holding[] | null;
+  strategy: StrategyData | null;
+  navSeries: NavPoint[] | null;
+}
+
+/** 자산 추이 차트를 그리기 위한 최소 거래일 */
+const NAV_MIN_DAYS = 5;
+
+/* ════════════════════════════════════════════════
+   샘플 데이터 — API 연동 시 통째로 교체
+   ════════════════════════════════════════════════ */
+
+const SAMPLE: DashboardData = {
+  updatedAt: "2026.09.09 15:40",
+
+  market: {
+    kospi: { name: "KOSPI", value: 7015.2, changeRate: -0.24, periodReturn: 2.96 },
+    kosdaq: { name: "KOSDAQ", value: 881.44, changeRate: -0.51, periodReturn: 1.85 },
+  },
+
+  account: {
+    totalAsset: 10455300,
+    stockValue: 9704790,
+    cash: 750510,
+    cashRatio: 7.18,
+    purchaseAmount: 9696970,
+    evalProfit: 7820,
+    evalProfitRate: 0.08,
+  },
+
+  holdings: [
+    { code: "073240", name: "금호타이어", qty: 158, avgPrice: 7840, currentPrice: 8080 },
+    { code: "005850", name: "에스엘", qty: 21, avgPrice: 58561, currentPrice: 58800 },
+    { code: "007070", name: "GS리테일", qty: 47, avgPrice: 26535, currentPrice: 26550 },
+    { code: "353200", name: "대덕전자", qty: 10, avgPrice: 115300, currentPrice: 115100 },
+    { code: "003230", name: "삼양식품", qty: 1, avgPrice: 1209000, currentPrice: 1206000 },
+    { code: "161890", name: "한국콜마", qty: 9, avgPrice: 133500, currentPrice: 133100 },
+    { code: "006360", name: "GS건설", qty: 34, avgPrice: 36335, currentPrice: 36100 },
+    { code: "103590", name: "일진전기", qty: 16, avgPrice: 73900, currentPrice: 72700 },
+  ],
+
+  strategy: {
+    startDate: "2026.08.13",
+    endDate: "2026.09.09",
+    rebalanceCount: 2,
+
+    periodReturn: 4.2,
+    periodProfit: 421836,
+    benchmarkReturn: 2.96,
+    excessReturn: 1.24,
+
+    maxDrawdown: 2.86,
+    mddMaxDays: 9,
+    mddCurrentDays: 2,
+    isRecovered: false,
+
+    winCount: 2,
+    periodCount: 2,
+    avgWin: 2.09,
+
+    totalBuyValue: 15240800,
+    totalSellValue: 5483200,
+
+    cagr: 74.5,
+    volatility: 18.4,
+    sharpeRatio: 2.31,
+    alpha: 12.8,
+    turnoverRate: 148.6,
+    profitFactor: 2.14,
+  },
+
+  navSeries: [
+    { date: "08.13", nav: 10033464, benchmark: 6813.34 },
+    { date: "08.14", nav: 10160134, benchmark: 6883.72 },
+    { date: "08.17", nav: 10205600, benchmark: 6921.4 },
+    { date: "08.18", nav: 10142300, benchmark: 6874.1 },
+    { date: "08.19", nav: 10287900, benchmark: 6952.8 },
+    { date: "08.20", nav: 10331200, benchmark: 6988.3 },
+    { date: "08.21", nav: 10298700, benchmark: 6961.5 },
+    { date: "08.24", nav: 10412500, benchmark: 7024.6 },
+    { date: "08.25", nav: 10488300, benchmark: 7068.9 },
+    { date: "08.26", nav: 10390100, benchmark: 7001.2 },
+    { date: "08.27", nav: 10245800, benchmark: 6912.7 },
+    { date: "08.28", nav: 10188400, benchmark: 6870.4 },
+    { date: "08.31", nav: 10251900, benchmark: 6908.9 },
+    { date: "09.01", nav: 10334600, benchmark: 6957.3 },
+    { date: "09.02", nav: 10298200, benchmark: 6931.8 },
+    { date: "09.03", nav: 10402700, benchmark: 6989.4 },
+    { date: "09.04", nav: 10448900, benchmark: 7020.1 },
+    { date: "09.07", nav: 10521800, benchmark: 7058.6 },
+    { date: "09.08", nav: 10487400, benchmark: 7032.2 },
+    { date: "09.09", nav: 10455300, benchmark: 7015.2 },
+  ],
 };
 
-// ── 데이터 부족 Placeholder ──
-function DataPending({ message }: { message: string }) {
+/* ════════════════════════════════════════════════
+   null-safe 유틸
+
+   포맷터는 값이 없으면 null 을 돌려준다.
+   StatCard 는 value 가 null 이면 대기 상태로 렌더하므로
+   호출부에서 별도 분기를 하지 않아도 된다.
+   ════════════════════════════════════════════════ */
+
+/** null / undefined / NaN 을 한 번에 걸러낸다 */
+function has(v: number | null | undefined): v is number {
+  return v !== null && v !== undefined && Number.isFinite(v);
+}
+
+const won = (v: Num | undefined) =>
+  has(v) ? `₩${Math.round(v).toLocaleString()}` : null;
+
+const manwon = (v: Num | undefined) =>
+  has(v) ? `₩${(v / 10000).toFixed(1)}만` : null;
+
+const pct = (v: Num | undefined, digits = 2) =>
+  has(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%` : null;
+
+/** +₩126,670 / -₩7,990 형태 */
+const signedWon = (v: Num | undefined) =>
+  has(v)
+    ? `${v >= 0 ? "+" : "-"}₩${Math.abs(Math.round(v)).toLocaleString()}`
+    : null;
+
+/** 템플릿 문자열에 넣기 전 null 을 undefined 로 바꾼다 (sub prop 용) */
+const orUndef = (v: string | null) => v ?? undefined;
+
+/** 상승 로즈 / 하락 블루 (국내 관례) */
+const toneClass = (v: Num | undefined) =>
+  !has(v) ? "text-gray-900" : v >= 0 ? "text-rose-600" : "text-blue-600";
+
+const UP = "#e11d48";
+const DOWN = "#2563eb";
+
+/** 자산 구성 도넛 팔레트 — 등락 색(로즈/블루)과 헷갈리지 않게 선정 */
+const SLICE_COLORS = [
+  "#5B8DEF",
+  "#7C6BF0",
+  "#A855C7",
+  "#E0629B",
+  "#F0836B",
+  "#E8A33D",
+  "#7BB661",
+  "#3FA6A0",
+];
+const CASH_COLOR = "#D8DDE4";
+
+/** 벤치마크 지수 색 — 도넛 팔레트에서 가져와 톤을 맞춘다 */
+const KOSPI_COLOR = "#7C6BF0";
+const KOSDAQ_COLOR = "#3FA6A0";
+
+/* ════════════════════════════════════════════════
+   공통 컴포넌트
+   ════════════════════════════════════════════════ */
+
+function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-      <BarChart3 size={28} className="mb-2 opacity-40" />
+    <div className="mb-3">
+      <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+      {sub && <p className="text-sm text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function EmptyState({
+  message,
+  height = 200,
+  icon = "inbox",
+}: {
+  message: string;
+  height?: number;
+  icon?: "inbox" | "chart";
+}) {
+  const Icon = icon === "chart" ? LineChartIcon : Inbox;
+
+  return (
+    <div
+      className="flex flex-col items-center justify-center text-gray-400"
+      style={{ height }}
+    >
+      <Icon size={28} className="mb-2.5 opacity-40" />
       <p className="text-sm">{message}</p>
     </div>
   );
 }
 
-function MetricPending({ label, message }: { label: string; message: string }) {
+function StatCard({
+  label,
+  value,
+  sub,
+  tone,
+  compact = false,
+}: {
+  label: string;
+  value: string | null;
+  sub?: string;
+  tone?: Num;
+  compact?: boolean;
+}) {
+  const pending = value === null;
+
   return (
-    <Card className="p-6 bg-white shadow-sm">
-      <div>
-        <p className="text-sm text-gray-600">{label}</p>
-        <p className="text-3xl font-bold text-gray-300 mt-2">—</p>
-        <p className="text-xs text-gray-400 mt-1">{message}</p>
+    <Card
+      className={`${compact ? "p-4" : "p-5"} shadow-sm flex flex-col justify-center ${
+        pending ? "bg-gray-50/60" : "bg-white"
+      }`}
+    >
+      <p className="text-sm text-gray-600">{label}</p>
+      <p
+        className={`${compact ? "text-lg" : "text-2xl"} font-bold mt-1.5 ${
+          pending ? "text-gray-300" : toneClass(tone)
+        }`}
+      >
+        {pending ? "—" : value}
+      </p>
+      {sub && (
+        <p className={`text-xs mt-1 ${pending ? "text-gray-400" : "text-gray-500"}`}>
+          {sub}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   1. 오늘의 시장
+   ════════════════════════════════════════════════ */
+
+function IndexBox({ index }: { index: MarketIndex | null }) {
+  if (!index) {
+    return (
+      <div className="flex-1">
+        <p className="text-sm text-gray-500">지수</p>
+        <p className="text-xl font-bold text-gray-300 mt-1">—</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1">
+      <p className="text-sm text-gray-600">{index.name}</p>
+      <div className="flex items-baseline gap-2 mt-1">
+        <span
+          className={`text-xl font-bold ${
+            has(index.value) ? "text-gray-900" : "text-gray-300"
+          }`}
+        >
+          {has(index.value) ? index.value.toLocaleString() : "—"}
+        </span>
+        {has(index.changeRate) && (
+          <span className={`text-sm font-medium ${toneClass(index.changeRate)}`}>
+            {pct(index.changeRate)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MarketSection() {
+  const market = SAMPLE.market;
+  const s = SAMPLE.strategy;
+
+  return (
+    <Card className="p-5 bg-white shadow-sm">
+      <div className="flex items-center divide-x divide-gray-200">
+        <div className="flex flex-1 gap-8 pr-6">
+          <IndexBox index={market?.kospi ?? null} />
+          <IndexBox index={market?.kosdaq ?? null} />
+        </div>
+
+        <div className="flex-1 pl-6">
+          <p className="text-sm text-gray-600">전략 수익률</p>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span
+              className={`text-xl font-bold ${
+                has(s?.periodReturn) ? toneClass(s?.periodReturn) : "text-gray-300"
+              }`}
+            >
+              {pct(s?.periodReturn) ?? "—"}
+            </span>
+            {has(s?.excessReturn) && (
+              <span className="text-xs text-gray-500">
+                KOSPI 대비 {pct(s?.excessReturn)}p
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     </Card>
   );
 }
 
-export function StrategiesPage() {
-  const [historyItems, setHistoryItems] = useState<RebalanceHistoryItem[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<RebalanceDetailDto | null>(null);
-  const [snapshot, setSnapshot] = useState<RebalanceSnapshotDto | null>(null);
-  const [dashboard, setDashboard] = useState<AccountDashboardDto | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/* ════════════════════════════════════════════════
+   2. 내 자산 — 자산 구성 도넛 + 지표 카드
+   ════════════════════════════════════════════════ */
 
-  const fetchInitial = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [historyRes, dashRes] = await Promise.all([
-        getRebalanceHistory(),
-        getDashboard(),
-      ]);
-      setHistoryItems(historyRes.data.items);
-      setDashboard(dashRes.data);
+function AssetDonutCard() {
+  const a = SAMPLE.account;
+  const holdings = SAMPLE.holdings ?? [];
 
-      if (historyRes.data.items.length > 0) {
-        const latestId = historyRes.data.items[0].id;
-        setSelectedId(latestId);
-        await fetchDetail(latestId);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || "데이터를 불러오지 못했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const slices = [
+    ...holdings
+      .filter((h) => has(h.currentPrice))
+      .map((h, i) => ({
+        name: h.name,
+        value: (h.currentPrice as number) * h.qty,
+        color: SLICE_COLORS[i % SLICE_COLORS.length],
+      })),
+    ...(has(a?.cash) && (a?.cash as number) > 0
+      ? [{ name: "예수금", value: a?.cash as number, color: CASH_COLOR }]
+      : []),
+  ].sort((x, y) => y.value - x.value);
 
-  const fetchDetail = async (id: string) => {
-    try {
-      setDetailLoading(true);
-      const [detailRes, snapshotRes] = await Promise.all([
-        getRebalanceDetail(id),
-        getRebalanceSnapshot(id),
-      ]);
-      setDetail(detailRes.data);
-      setSnapshot(snapshotRes.data);
-    } catch {
-      setDetail(null);
-      setSnapshot(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
-  const handleSelectRebalance = async (id: string) => {
-    setSelectedId(id);
-    await fetchDetail(id);
-  };
-
-  useEffect(() => {
-    fetchInitial();
-  }, []);
-
-  // ── 포트폴리오 데이터 (리밸런스 orders + 대시보드 holdings 매칭) ──
-  const portfolioData = useMemo(() => {
-    if (!detail || !dashboard) return [];
-    const holdingsMap = new Map(dashboard.holdings.map((h) => [h.stock_code, h]));
-
-    return detail.orders
-      .filter((o) => o.status === "FILLED")
-      .map((order) => {
-        const holding = holdingsMap.get(order.stock_code);
-        const avgBuyPrice = Number(order.avg_fill_price || 0);
-        const currentPrice = holding ? Number(holding.current_price) : avgBuyPrice;
-        const qty = order.filled_qty;
-        const evalAmount = currentPrice * qty;
-        const profitLossRate = avgBuyPrice > 0 ? ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100 : 0;
-
-        return {
-          stock_code: order.stock_code,
-          stock_name: holding?.stock_name || order.stock_code,
-          qty,
-          avg_buy_price: avgBuyPrice,
-          current_price: currentPrice,
-          eval_amount: evalAmount,
-          profit_loss: (currentPrice - avgBuyPrice) * qty,
-          profit_loss_rate: profitLossRate,
-        };
-      })
-      .sort((a, b) => b.profit_loss_rate - a.profit_loss_rate);
-  }, [detail, dashboard]);
-
-  // ── 파생 지표 ──
-  const metrics = useMemo(() => {
-    if (!detail || !dashboard) return null;
-    const summary = detail.execution_summary;
-    const totalEvalAmount = portfolioData.reduce((sum, p) => sum + p.eval_amount, 0);
-    const totalProfitLoss = portfolioData.reduce((sum, p) => sum + p.profit_loss, 0);
-    const totalPurchase = portfolioData.reduce((sum, p) => sum + p.avg_buy_price * p.qty, 0);
-    const totalReturnRate = totalPurchase > 0 ? (totalProfitLoss / totalPurchase) * 100 : 0;
-    const winCount = portfolioData.filter((p) => p.profit_loss > 0).length;
-    const winRate = portfolioData.length > 0 ? (winCount / portfolioData.length) * 100 : 0;
-    const topContributors = [...portfolioData].sort((a, b) => b.profit_loss - a.profit_loss).slice(0, 3);
-
-    return {
-      failRate: summary.fail_rate * 100,
-      filledCount: summary.filled_count,
-      signalCount: summary.signal_count,
-      cashRatio: summary.cash_ratio * 100,
-      estimatedCashAfter: Number(summary.estimated_cash_after),
-      rebalanceDuration: summary.rebalance_duration_seconds,
-      avgFillDuration: summary.avg_fill_duration_seconds,
-      totalEvalAmount,
-      totalProfitLoss,
-      totalReturnRate,
-      totalPurchase,
-      winRate,
-      winCount,
-      totalCount: portfolioData.length,
-      topContributors,
-    };
-  }, [detail, dashboard, portfolioData]);
-
-  // ── 종목별 수익률 차트 데이터 ──
-  const chartData = useMemo(() => {
-    return portfolioData.map((p) => ({
-      symbol: p.stock_name,
-      return: Number(p.profit_loss_rate.toFixed(2)),
-    }));
-  }, [portfolioData]);
-
-  // ── 로딩 ──
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="animate-spin text-gray-400" size={36} />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-        <p className="text-gray-500">{error}</p>
-        <button onClick={fetchInitial} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">
-          <RefreshCw size={16} /> 다시 시도
-        </button>
-      </div>
-    );
-  }
-
-  if (!detail || !metrics) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <p className="text-gray-500">리밸런스 이력이 없습니다.</p>
-      </div>
-    );
-  }
-
-  const unrealizedPnLRate = metrics.totalReturnRate;
-  const unrealizedPnL = metrics.totalProfitLoss;
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  const empty = slices.length === 0 || total <= 0;
+  const legend = slices.slice(0, 4);
+  const restValue = slices
+    .slice(legend.length)
+    .reduce((sum, s) => sum + s.value, 0);
 
   return (
-    <div className="p-8 space-y-6 bg-gray-50">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">전략 성과 분석</h1>
-          <div className="flex items-center gap-1.5 mt-1">
-            <p className="text-gray-600">
-              {formatDateTime(detail.executed_at)} 리밸런스 구간
-            </p>
-            <UITooltip>
-              <TooltipTrigger asChild>
-                <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
-                  <Info size={14} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-sm">
-                <p className="font-semibold mb-1.5">리밸런스 구간</p>
-                <p className="text-gray-300 leading-relaxed">한 차례 리밸런싱한 뒤 다음 리밸런싱까지의 기간이에요.</p>
-                <p className="text-gray-300 leading-relaxed">이 기간 동안의 운용 결과만 보여요.</p>
-              </TooltipContent>
-            </UITooltip>
-          </div>
-        </div>
-
-        {/* 셀렉터 + 새로고침 버튼 (변경 없음) */}
-        <div className="flex items-center gap-3">
-          {historyItems.length > 1 && (
-            <div className="relative">
-              <select
-                value={selectedId || ""}
-                onChange={(e) => handleSelectRebalance(e.target.value)}
-                className="appearance-none bg-white border border-gray-200 rounded-lg px-4 py-2 pr-8 text-sm text-gray-700 cursor-pointer hover:bg-gray-50"
-              >
-                {historyItems.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {formatDateTime(item.executed_at)} — {item.strategy_name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            </div>
-          )}
-          <button onClick={fetchInitial} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-            <RefreshCw size={16} /> 새로고침
-          </button>
-        </div>
+    <Card
+      className={`p-5 shadow-sm flex flex-col ${
+        empty ? "bg-gray-50/60" : "bg-white"
+      }`}
+    >
+      <div className="flex items-baseline justify-between">
+        <p
+          className={`text-sm font-medium ${
+            empty ? "text-gray-500" : "text-gray-700"
+          }`}
+        >
+          자산 구성
+        </p>
+        {!empty && <p className="text-xs text-gray-400">비중순</p>}
       </div>
 
-      {detailLoading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="animate-spin text-gray-400" size={28} />
-        </div>
+      {empty ? (
+        <EmptyState message="표시할 자산이 없습니다" height={240} />
       ) : (
         <>
-          {/* ═══ 리밸런싱 실행 요약 ═══ */}
-          <div className="grid grid-cols-4 gap-4">
-            <Card className="p-6 bg-white shadow-sm">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-sm text-gray-600">편입 결과</p>
-                    <UITooltip>
-                      <TooltipTrigger asChild>
-                        <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
-                          <Info size={13} />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-md">
-                        <p className="font-semibold mb-1.5">편입 결과</p>
-                        <p className="text-gray-300 leading-relaxed">목표 대비 실제 반영된 비율이에요.</p>
-                        <p className="text-gray-300 leading-relaxed mt-1.5">새로 산 종목과 계속 보유중인 종목을 합쳐서 봐요.</p>
-                      </TooltipContent>
-                    </UITooltip>
-                  </div>
-                  
-                  <p className={`text-3xl font-bold mt-2 ${
-                    metrics.failRate > 0 ? "text-rose-600" : "text-gray-900"
-                  }`}>
-                    {detail.buy_count + detail.hold_count} / {detail.buy_signal_count}
-                  </p>
-                  
-                  <p className="text-xs text-gray-500 mt-2">
-                    편입 {detail.buy_count} · 유지 {detail.hold_count} · 편출 {detail.sell_count}
-                  </p>
-                </div>
-                
-                {metrics.failRate > 0 && (
-                  <AlertCircle className="text-rose-400" size={24} />
-                )}
-              </div>
-            </Card>
-
-            {/* <Card className="p-6 bg-white shadow-sm">
-              <div>
-                <p className="text-sm text-gray-600">예수금 비율</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{metrics.cashRatio.toFixed(1)}%</p>
-                <p className="text-xs text-gray-500 mt-1">₩{formatNumber(metrics.estimatedCashAfter)} 예수금</p>
-              </div>
-            </Card> */}
-            <Card className="p-6 bg-white shadow-md">
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm text-gray-600">자본 활용도</p>
-                <UITooltip>
-                  <TooltipTrigger asChild>
-                    <button className="text-orange-500 hover:text-orange-600 cursor-help transition-colors">
-                      <Info size={13} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-md">
-                    <p className="font-semibold mb-1.5">자본 활용도</p>
-                    <p className="text-gray-300 leading-relaxed">계좌 전체 자산 중 전략에 사용중인 자산의 비중이에요.</p>
-                    <p className="text-gray-300 leading-relaxed mt-1.5">여러 전략을 굴릴 때 자산 배분을 확인할 수 있어요.</p>
-                  </TooltipContent>
-                </UITooltip>
-              </div>
-              <p className="text-3xl font-bold text-gray-300 mt-2">—</p>
-              <p className="text-xs text-gray-400 mt-1">계산 준비 중</p>
-            </Card>
-
-            <Card className="p-6 bg-white shadow-sm">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">리밸런싱 소요시간</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{metrics.rebalanceDuration.toFixed(1)}초</p>
-                  <p className="text-xs text-gray-500 mt-1">평균 실행 시간</p>
-                </div>
-                <Clock className="text-gray-400" size={24} />
-              </div>
-            </Card>
-
-            <Card className="p-6 bg-white shadow-sm">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">체결 소요시간</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{metrics.avgFillDuration.toFixed(1)}초</p>
-                  <p className="text-xs text-gray-500 mt-1">평균 체결 시간</p>
-                </div>
-                <Clock className="text-gray-400" size={24} />
-              </div>
-            </Card>
-          </div>
-
-          {/* ═══ 포트폴리오 현황 ═══ */}
-          <Card className="p-6 bg-white shadow-sm">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">포트폴리오 현황</h2>
-                <p className="text-sm text-gray-600 mt-1">현재 {portfolioData.length}개 종목 보유</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm text-gray-600">총 평가금액</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-2xl font-bold text-gray-900">
-                    ₩{(metrics.totalEvalAmount / 10000).toFixed(1)}만원
-                  </p>
-                  <Badge className={unrealizedPnLRate >= 0 ? "bg-rose-100 text-rose-700" : "bg-blue-100 text-blue-700"}>
-                    {unrealizedPnLRate >= 0 ? "+" : ""}{unrealizedPnLRate.toFixed(2)}%
-                  </Badge>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  {unrealizedPnL >= 0 ? "+" : ""}₩{(unrealizedPnL / 10000).toFixed(1)}만원
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-auto max-h-96">
-              <table className="w-full">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">종목명</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">수량</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">평균단가</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">현재가</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">평가금액</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">손익률</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {portfolioData.map((stock) => (
-                    <tr key={stock.stock_code} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm text-gray-900">{stock.stock_name}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-600">{stock.qty}주</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-600">₩{formatNumber(Math.round(stock.avg_buy_price))}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-900 font-medium">₩{formatNumber(stock.current_price)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-900">₩{formatNumber(Math.round(stock.eval_amount))}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className={`text-sm font-medium ${stock.profit_loss_rate >= 0 ? "text-rose-600" : "text-blue-600"}`}>
-                          {stock.profit_loss_rate >= 0 ? "+" : ""}{stock.profit_loss_rate.toFixed(2)}%
-                        </span>
-                      </td>
-                    </tr>
+          <div className="relative flex-1 min-h-[150px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={slices}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius="62%"
+                  outerRadius="92%"
+                  paddingAngle={1.5}
+                  stroke="none"
+                >
+                  {slices.map((s) => (
+                    <Cell key={s.name} fill={s.color} />
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                </Pie>
+                <Tooltip
+                  formatter={(v: number, n: string) => [
+                    `${won(v)} (${((v / total) * 100).toFixed(1)}%)`,
+                    n,
+                  ]}
+                  contentStyle={{ fontSize: 12 }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
 
-          {/* ═══ 성과 분석 - 수익률 차트 + Alpha/CAGR/구간수익률 ═══ */}
-          <div className="grid grid-cols-3 gap-6">
-            {/* 포트폴리오 vs KOSPI 차트 */}
-            <Card className="col-span-2 p-6 bg-white shadow-sm">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">포트폴리오 수익률 vs KOSPI</h2>
-              <div className="flex flex-col items-center justify-center h-[300px] text-gray-400">
-                <LineChartIcon size={40} className="mb-3 opacity-30" />
-                <p className="text-sm font-medium">일별 스냅샷 수집 후 확인할 수 있습니다</p>
-                <p className="text-xs mt-1">리밸런싱 이후 일별 포트폴리오 가치 추적이 필요합니다</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-xs text-gray-500">종목</span>
+              <span className="text-lg font-bold text-gray-900">
+                {holdings.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-1.5">
+            {legend.map((s) => (
+              <div key={s.name} className="flex items-center gap-2 text-xs">
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: s.color }}
+                />
+                <span className="text-gray-600 truncate flex-1">{s.name}</span>
+                <span className="text-gray-900 font-medium tabular-nums">
+                  {((s.value / total) * 100).toFixed(1)}%
+                </span>
               </div>
-            </Card>
+            ))}
 
-            <div className="space-y-4">
-              <MetricPending label="Alpha" message="일별 수익률 데이터 필요" />
-              <MetricPending label="CAGR" message="최소 1개월 데이터 필요" />
-
-              <Card className="p-6 bg-white shadow-sm">
-                <div>
-                  <p className="text-sm text-gray-600">구간 수익률</p>
-                  <div className="mt-3 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">포트폴리오</span>
-                      <span className={`font-medium ${metrics.totalReturnRate >= 0 ? "text-rose-600" : "text-blue-600"}`}>
-                        {metrics.totalReturnRate >= 0 ? "+" : ""}{metrics.totalReturnRate.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">KOSPI</span>
-                      <span className="font-medium text-gray-400">— 데이터 수집 중</span>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </div>
-          </div>
-
-          {/* ═══ 성과 분석 - 리스크 ═══ */}
-          <div className="grid grid-cols-3 gap-4">
-            <MetricPending label="MDD (최대 낙폭)" message="일별 시계열 데이터 필요" />
-            <MetricPending label="Volatility (변동성)" message="일별 시계열 데이터 필요" />
-            <MetricPending label="Sharpe Ratio" message="일별 시계열 데이터 필요" />
-          </div>
-
-          {/* ═══ 성과 분석 - 매매 (종목별 수익률 분포 + 승률/턴오버/상위기여) ═══ */}
-          <div className="grid grid-cols-3 gap-6">
-            {/* 종목별 수익률 분포 차트 */}
-            <Card className="col-span-2 p-6 bg-white shadow-sm">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">종목별 수익률 분포</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    dataKey="symbol"
-                    tick={{ fontSize: 10 }}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                  />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip
-                    formatter={(value: number) => [`${value.toFixed(2)}%`, "수익률"]}
-                    contentStyle={{ fontSize: 12 }}
-                  />
-                  <Bar dataKey="return" name="수익률 (%)" radius={[4, 4, 0, 0]}>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.return >= 0 ? "#0ea5e9" : "#f43f5e"} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
-
-            <div className="space-y-4">
-              {/* 승률 */}
-              <Card className="p-6 bg-white shadow-sm">
-                <div>
-                  <p className="text-sm text-gray-600">승률</p>
-                  <p className={`text-3xl font-bold mt-2 ${metrics.winRate >= 50 ? "text-rose-600" : "text-blue-600"}`}>
-                    {metrics.winRate.toFixed(1)}%
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {metrics.winCount}/{metrics.totalCount} 종목 수익
-                  </p>
-                </div>
-              </Card>
-
-              {/* 턴오버율 */}
-              <MetricPending label="턴오버율" message="2회 이상 리밸런스 필요" />
-
-              {/* 상위 기여 종목 */}
-              <Card className="p-6 bg-white shadow-sm">
-                <div>
-                  <p className="text-sm text-gray-600 mb-3">상위 기여 종목</p>
-                  <div className="space-y-2">
-                    {metrics.topContributors.map((stock) => (
-                      <div key={stock.stock_code} className="flex justify-between text-xs">
-                        <span className="text-gray-700 truncate">{stock.stock_name}</span>
-                        <span className={`font-medium ${stock.profit_loss_rate >= 0 ? "text-rose-600" : "text-blue-600"}`}>
-                          {stock.profit_loss_rate >= 0 ? "+" : ""}{stock.profit_loss_rate.toFixed(1)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-            </div>
+            {slices.length > legend.length && (
+              <div className="flex items-center gap-2 text-xs pt-0.5">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-gray-200" />
+                <span className="text-gray-400 flex-1">
+                  외 {slices.length - legend.length}개
+                </span>
+                <span className="text-gray-400 tabular-nums">
+                  {((restValue / total) * 100).toFixed(1)}%
+                </span>
+              </div>
+            )}
           </div>
         </>
       )}
+    </Card>
+  );
+}
+
+function AssetSection() {
+  const a = SAMPLE.account;
+  const holdingCount = SAMPLE.holdings?.length ?? 0;
+
+  return (
+    <div>
+      <SectionTitle title="내 자산" />
+
+      <div className="grid grid-cols-3 gap-4 items-stretch">
+        <AssetDonutCard />
+
+        <div className="col-span-2 grid grid-cols-2 gap-4">
+          <StatCard
+            label="전체 자산"
+            value={won(a?.totalAsset)}
+            sub="주식 + 예수금"
+          />
+          <StatCard
+            label="주식 평가금액"
+            value={won(a?.stockValue)}
+            sub={holdingCount > 0 ? `${holdingCount}종목 보유` : undefined}
+          />
+          <StatCard
+            label="예수금"
+            value={won(a?.cash)}
+            sub={orUndef(
+              has(a?.cashRatio) ? `전체 자산의 ${a?.cashRatio.toFixed(1)}%` : null
+            )}
+          />
+          <StatCard
+            label="평가손익"
+            value={pct(a?.evalProfitRate)}
+            sub={orUndef(signedWon(a?.evalProfit))}
+            tone={a?.evalProfitRate}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   3. 보유 종목
+   ════════════════════════════════════════════════ */
+
+type ChartMode = "rate" | "amount";
+
+interface HoldingRow extends Holding {
+  evalAmount: Num;
+  profit: Num;
+  rate: Num;
+}
+
+function RankCard({
+  title,
+  icon,
+  rows,
+}: {
+  title: string;
+  icon: "up" | "down";
+  rows: HoldingRow[];
+}) {
+  const Icon = icon === "up" ? TrendingUp : TrendingDown;
+
+  return (
+    <Card className="p-5 bg-white shadow-sm">
+      <div className="flex items-center gap-1.5 mb-3">
+        <Icon
+          size={15}
+          className={icon === "up" ? "text-rose-500" : "text-blue-500"}
+        />
+        <p className="text-sm font-medium text-gray-700">{title}</p>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-400">표시할 종목이 없습니다</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((s) => (
+            <div key={s.code} className="flex justify-between text-sm">
+              <span className="text-gray-700 truncate">{s.name}</span>
+              <span className={`font-medium ${toneClass(s.rate)}`}>
+                {pct(s.rate, 1) ?? "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function HoldingsSection() {
+  const [mode, setMode] = useState<ChartMode>("rate");
+
+  const totalAsset = SAMPLE.account?.totalAsset;
+
+  const rows: HoldingRow[] = (SAMPLE.holdings ?? [])
+    .map((h) => {
+      const priced = has(h.currentPrice) && has(h.avgPrice);
+      const evalAmount = has(h.currentPrice) ? h.currentPrice * h.qty : null;
+      const profit = priced
+        ? ((h.currentPrice as number) - (h.avgPrice as number)) * h.qty
+        : null;
+      const rate =
+        priced && (h.avgPrice as number) > 0
+          ? (((h.currentPrice as number) - (h.avgPrice as number)) /
+              (h.avgPrice as number)) *
+            100
+          : null;
+      return { ...h, evalAmount, profit, rate };
+    })
+    .sort((a, b) => (b.rate ?? -Infinity) - (a.rate ?? -Infinity));
+
+  const isEmpty = rows.length === 0;
+
+  const chartData = [...rows]
+    .filter((r) => (mode === "rate" ? has(r.rate) : has(r.profit)))
+    .sort((a, b) =>
+      mode === "rate"
+        ? (b.rate as number) - (a.rate as number)
+        : (b.profit as number) - (a.profit as number)
+    )
+    .map((r) => ({
+      symbol: r.name,
+      value:
+        mode === "rate" ? Number((r.rate as number).toFixed(2)) : (r.profit as number),
+    }));
+
+  const ranked = rows.filter((r) => has(r.rate));
+  const best = ranked.slice(0, 3);
+  const worst = [...ranked].reverse().slice(0, 3);
+
+  return (
+    <div>
+      <SectionTitle
+        title="보유 종목"
+        sub={isEmpty ? undefined : `${rows.length}개 종목`}
+      />
+
+      {/* 테이블 */}
+      <Card className="p-0 bg-white shadow-sm overflow-hidden mb-4">
+        {isEmpty ? (
+          <EmptyState message="보유 중인 종목이 없습니다" height={200} />
+        ) : (
+          <div className="overflow-auto max-h-[420px]">
+            <table className="w-full">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
+                    No.
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
+                    종목명
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    수량
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    평균 단가
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    현재가
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    평가금액
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    비중
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                    수익
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {rows.map((r, i) => {
+                  const weight =
+                    has(r.evalAmount) && has(totalAsset) && totalAsset > 0
+                      ? (r.evalAmount / totalAsset) * 100
+                      : null;
+
+                  return (
+                    <tr key={r.code} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                        {i + 1}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">{r.name}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {r.qty}주
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {won(r.avgPrice) ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-900 font-medium">
+                        {won(r.currentPrice) ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-900">
+                        {won(r.evalAmount) ?? "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {has(weight) ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gray-400 rounded-full"
+                                style={{ width: `${Math.min(weight * 5, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-500 tabular-nums w-10 text-right">
+                              {weight.toFixed(1)}%
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-300 text-right">—</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className={`text-sm font-medium ${toneClass(r.rate)}`}>
+                          {pct(r.rate) ?? "—"}
+                        </div>
+                        {has(r.profit) && (
+                          <div className="text-xs text-gray-500">
+                            {signedWon(r.profit)}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* 차트 + 순위 */}
+      <div className="grid grid-cols-3 gap-4 items-stretch">
+        <Card className="col-span-2 p-5 bg-white shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm font-medium text-gray-700">종목별 성과</p>
+
+            <div className="flex bg-gray-100 rounded-lg p-0.5">
+              {(
+                [
+                  ["rate", "수익률"],
+                  ["amount", "수익금"],
+                ] as [ChartMode, string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setMode(key)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    mode === key
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {chartData.length === 0 ? (
+            <EmptyState message="표시할 데이터가 없습니다" height={280} />
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis
+                  dataKey="symbol"
+                  tick={{ fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={70}
+                />
+                <YAxis
+                  tick={{ fontSize: 12 }}
+                  width={mode === "rate" ? 42 : 58}
+                  tickFormatter={(v: number) =>
+                    mode === "rate" ? `${v}%` : `${(v / 10000).toFixed(0)}만`
+                  }
+                />
+                <Tooltip
+                  formatter={(v: number) => [
+                    mode === "rate" ? `${v.toFixed(2)}%` : won(v),
+                    mode === "rate" ? "수익률" : "수익금",
+                  ]}
+                  contentStyle={{ fontSize: 12 }}
+                />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  {chartData.map((e, i) => (
+                    <Cell key={i} fill={e.value >= 0 ? UP : DOWN} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <div className="grid grid-rows-2 gap-4">
+          <RankCard title="수익 상위" icon="up" rows={best} />
+          <RankCard title="손실 상위" icon="down" rows={worst} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   4-1. 자산 추이
+   ════════════════════════════════════════════════ */
+
+function NavTrendCard() {
+  const points = (SAMPLE.navSeries ?? []).filter(
+    (d) => has(d.nav) && has(d.benchmark)
+  );
+
+  if (points.length < NAV_MIN_DAYS) {
+    const progress = Math.min((points.length / NAV_MIN_DAYS) * 100, 100);
+
+    return (
+      <Card className="p-5 bg-gray-50/60 shadow-sm">
+        <p className="text-sm font-medium text-gray-500">자산 추이</p>
+
+        <div className="flex flex-col items-center justify-center h-[240px] text-gray-400">
+          <LineChartIcon size={32} className="mb-3 opacity-40" />
+          <p className="text-sm">일별 데이터를 모으는 중입니다</p>
+
+          <div className="w-48 mt-4">
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gray-400 rounded-full transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-2 text-center">
+              {points.length} / {NAV_MIN_DAYS} 거래일
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  // 시작점을 100 으로 정규화해 전략과 지수를 같은 축에서 비교한다
+  const base = points[0];
+  const baseNav = base.nav as number;
+  const baseBm = base.benchmark as number;
+
+  if (baseNav <= 0 || baseBm <= 0) {
+    return (
+      <Card className="p-5 bg-gray-50/60 shadow-sm">
+        <p className="text-sm font-medium text-gray-500">자산 추이</p>
+        <EmptyState message="기준일 데이터가 올바르지 않습니다" height={240} icon="chart" />
+      </Card>
+    );
+  }
+
+  const data = points.map((d) => ({
+    date: d.date,
+    전략: ((d.nav as number) / baseNav) * 100,
+    KOSPI: ((d.benchmark as number) / baseBm) * 100,
+  }));
+
+  const last = data[data.length - 1];
+
+  return (
+    <Card className="p-5 bg-white shadow-sm">
+      <div className="flex items-baseline justify-between mb-4">
+        <div className="flex items-baseline gap-3">
+          <p className="text-sm font-medium text-gray-700">자산 추이</p>
+          <span className="text-xs text-gray-400">
+            {points.length}거래일 · 시작일 100 기준
+          </span>
+        </div>
+        <div className="flex items-baseline gap-4 text-xs">
+          <span className="text-gray-500">
+            전략{" "}
+            <span className={`font-bold ${toneClass(last.전략 - 100)}`}>
+              {last.전략.toFixed(1)}
+            </span>
+          </span>
+          <span className="text-gray-500">
+            KOSPI{" "}
+            <span className="font-bold text-gray-700">{last.KOSPI.toFixed(1)}</span>
+          </span>
+        </div>
+      </div>
+
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="date" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+          <YAxis
+            tick={{ fontSize: 11 }}
+            width={44}
+            domain={["auto", "auto"]}
+            tickFormatter={(v: number) => v.toFixed(0)}
+          />
+          <Tooltip
+            formatter={(v: number) => v.toFixed(2)}
+            contentStyle={{ fontSize: 12 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Line type="monotone" dataKey="전략" stroke={UP} strokeWidth={2} dot={false} />
+          <Line
+            type="monotone"
+            dataKey="KOSPI"
+            stroke={KOSPI_COLOR}
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            dot={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   4-2. 수익률 비교 막대
+   ════════════════════════════════════════════════ */
+
+function ReturnCompareCard() {
+  const s = SAMPLE.strategy;
+  const m = SAMPLE.market;
+
+  const bars = [
+    {
+      label: "전략",
+      value: s?.periodReturn ?? null,
+      color: has(s?.periodReturn) && (s?.periodReturn as number) >= 0 ? UP : DOWN,
+      primary: true,
+    },
+    {
+      label: m?.kospi?.name ?? "KOSPI",
+      value: m?.kospi?.periodReturn ?? null,
+      color: KOSPI_COLOR,
+      primary: false,
+    },
+    {
+      label: m?.kosdaq?.name ?? "KOSDAQ",
+      value: m?.kosdaq?.periodReturn ?? null,
+      color: KOSDAQ_COLOR,
+      primary: false,
+    },
+  ].filter((b) => has(b.value));
+
+  if (bars.length === 0) {
+    return (
+      <Card className="p-5 bg-gray-50/60 shadow-sm flex flex-col">
+        <p className="text-sm font-medium text-gray-500">수익률 비교</p>
+        <EmptyState message="비교할 수익률이 없습니다" height={180} />
+      </Card>
+    );
+  }
+
+  const max = Math.max(...bars.map((b) => Math.abs(b.value as number)), 0.01);
+
+  return (
+    <Card className="p-5 bg-white shadow-sm flex flex-col">
+      <p className="text-sm font-medium text-gray-700 mb-4">수익률 비교</p>
+
+      <div className="flex-1 flex flex-col justify-center gap-4">
+        {bars.map((b) => (
+          <div key={b.label}>
+            <div className="flex justify-between items-baseline mb-1.5">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: b.color }}
+                />
+                <span
+                  className={`text-xs ${
+                    b.primary ? "text-gray-900 font-medium" : "text-gray-500"
+                  }`}
+                >
+                  {b.label}
+                </span>
+              </div>
+              <span
+                className={`text-sm font-bold ${
+                  b.primary ? toneClass(b.value) : "text-gray-700"
+                }`}
+              >
+                {pct(b.value)}
+              </span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${(Math.abs(b.value as number) / max) * 100}%`,
+                  backgroundColor: b.color,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {has(s?.excessReturn) && (
+        <p className="text-xs text-gray-400 mt-4 pt-3 border-t border-gray-100">
+          전략이 KOSPI보다 {pct(s?.excessReturn)}p 앞섭니다
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   4-3. 전략 성과
+   ════════════════════════════════════════════════ */
+
+/** 낙폭 상태 문구 — 값 조합에 따라 세 갈래 */
+function drawdownSubText(s: StrategyData | null): string | undefined {
+  if (!s || !has(s.maxDrawdown)) return undefined;
+  if (s.maxDrawdown === 0) return "낙폭 없음";
+  if (s.isRecovered === true) {
+    return has(s.mddMaxDays) ? `최장 ${s.mddMaxDays}일 · 회복 완료` : "회복 완료";
+  }
+  if (s.isRecovered === false) {
+    return has(s.mddCurrentDays) ? `회복 중 · ${s.mddCurrentDays}일차` : "회복 중";
+  }
+  return undefined;
+}
+
+/** 섹션 부제 — 값이 있는 조각만 이어붙인다 */
+function strategySubText(s: StrategyData | null): string | undefined {
+  if (!s) return undefined;
+
+  const parts: string[] = [];
+
+  if (s.startDate && s.endDate) parts.push(`${s.startDate} ~ ${s.endDate}`);
+  if (has(s.rebalanceCount)) parts.push(`리밸런싱 ${s.rebalanceCount}회`);
+
+  const buy = has(s.totalBuyValue) ? s.totalBuyValue : 0;
+  const sell = has(s.totalSellValue) ? s.totalSellValue : 0;
+  if (has(s.totalBuyValue) || has(s.totalSellValue)) {
+    parts.push(`거래대금 ${manwon(buy + sell)}`);
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+function StrategySection() {
+  const s = SAMPLE.strategy;
+
+  const winRate =
+    has(s?.winCount) && has(s?.periodCount) && (s?.periodCount as number) > 0
+      ? `${(((s?.winCount as number) / (s?.periodCount as number)) * 100).toFixed(0)}%`
+      : null;
+
+  return (
+    <div>
+      <SectionTitle title="전략 성과" sub={strategySubText(s ?? null)} />
+
+      <div className="mb-4">
+        <NavTrendCard />
+      </div>
+
+      {/* 비교 막대 + 주요 지표 */}
+      <div className="grid grid-cols-3 gap-4 items-stretch">
+        <ReturnCompareCard />
+
+        <div className="col-span-2 grid grid-cols-2 gap-4">
+          <StatCard
+            label="수익률"
+            value={pct(s?.periodReturn)}
+            sub={orUndef(signedWon(s?.periodProfit))}
+            tone={s?.periodReturn}
+          />
+          <StatCard
+            label="초과수익"
+            value={orUndef(pct(s?.excessReturn)) ? `${pct(s?.excessReturn)}p` : null}
+            sub={orUndef(
+              has(s?.benchmarkReturn) ? `KOSPI ${pct(s?.benchmarkReturn)}` : null
+            )}
+            tone={s?.excessReturn}
+          />
+          <StatCard
+            label="최대 낙폭"
+            value={
+              has(s?.maxDrawdown) ? `${(s?.maxDrawdown as number).toFixed(1)}%` : null
+            }
+            sub={drawdownSubText(s ?? null)}
+          />
+          <StatCard
+            label="승률"
+            value={winRate}
+            sub={
+              winRate
+                ? `${s?.periodCount}구간 중 ${s?.winCount}구간 수익`
+                : "리밸런싱 1회 이상 필요"
+            }
+          />
+        </div>
+      </div>
+
+      {/* 보조 지표 */}
+      <div className="grid grid-cols-6 gap-3 mt-4">
+        <StatCard
+          compact
+          label="연평균 수익률"
+          value={pct(s?.cagr)}
+          sub={has(s?.cagr) ? "복리 환산" : "1개월 이상 필요"}
+          tone={s?.cagr}
+        />
+        <StatCard
+          compact
+          label="손익비"
+          value={has(s?.profitFactor) ? (s?.profitFactor as number).toFixed(2) : null}
+          sub={has(s?.profitFactor) ? "이익 ÷ 손실" : "손실 구간 발생 후 산출"}
+        />
+        <StatCard
+          compact
+          label="회전율"
+          value={
+            has(s?.turnoverRate) ? `${(s?.turnoverRate as number).toFixed(1)}%` : null
+          }
+          sub={has(s?.turnoverRate) ? "연율 환산" : "리밸런싱 2회 이상 필요"}
+        />
+        <StatCard
+          compact
+          label="변동성"
+          value={has(s?.volatility) ? `${(s?.volatility as number).toFixed(1)}%` : null}
+          sub={has(s?.volatility) ? "연율 환산" : "일별 데이터 5일 이상 필요"}
+        />
+        <StatCard
+          compact
+          label="샤프 지수"
+          value={has(s?.sharpeRatio) ? (s?.sharpeRatio as number).toFixed(2) : null}
+          sub={has(s?.sharpeRatio) ? "위험 대비 수익" : "일별 데이터 5일 이상 필요"}
+        />
+        <StatCard
+          compact
+          label="알파"
+          value={pct(s?.alpha)}
+          sub={has(s?.alpha) ? "KOSPI 대비 초과" : "1개월 이상 필요"}
+          tone={s?.alpha}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════
+   페이지
+   ════════════════════════════════════════════════ */
+
+export function StrategiesPage() {
+  return (
+    <div className="p-8 space-y-8 bg-gray-50 min-h-screen">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">운용 현황</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {SAMPLE.updatedAt ? `${SAMPLE.updatedAt} 기준` : "갱신 시각 확인 중"}
+          </p>
+        </div>
+        <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+          <RefreshCw size={16} /> 새로고침
+        </button>
+      </div>
+
+      <MarketSection />
+      <AssetSection />
+      <HoldingsSection />
+      <StrategySection />
     </div>
   );
 }
