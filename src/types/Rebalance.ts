@@ -75,3 +75,18 @@ export interface RebalanceOrderDto {
   updated_at: string;
   fill_duration_seconds: number;
 }
+
+export interface SnapshotHoldingDto {
+  stock_code: string;
+  stock_name: string;
+  holding_qty: number;
+  avg_buy_price: string;   // Decimal → JSON에선 문자열
+}
+export interface RebalanceSnapshotDto {
+  snapshot_id: string;
+  snapshot_at: string;
+  snapshot_type: string;
+  rebalance_id: string | null;
+  cash_amount: number | null;
+  holdings: SnapshotHoldingDto[];
+}

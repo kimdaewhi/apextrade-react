@@ -28,9 +28,9 @@ import {
   BarChart3,
   LineChart as LineChartIcon,
 } from "lucide-react";
-import { getRebalanceHistory, getRebalanceDetail } from "../api/StrategyApi";
+import { getRebalanceHistory, getRebalanceDetail, getRebalanceSnapshot } from "../api/StrategyApi";
 import { getDashboard } from "../api/AccountApi";
-import type { RebalanceHistoryItem, RebalanceDetailDto } from "../types/Rebalance";
+import type { RebalanceHistoryItem, RebalanceDetailDto, RebalanceSnapshotDto } from "../types/Rebalance";
 import type { AccountDashboardDto } from "../types/Account";
 
 const formatNumber = (value: string | number) => Number(value).toLocaleString();
@@ -66,6 +66,7 @@ export function StrategiesPage() {
   const [historyItems, setHistoryItems] = useState<RebalanceHistoryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RebalanceDetailDto | null>(null);
+  const [snapshot, setSnapshot] = useState<RebalanceSnapshotDto | null>(null);
   const [dashboard, setDashboard] = useState<AccountDashboardDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -97,15 +98,19 @@ export function StrategiesPage() {
   const fetchDetail = async (id: string) => {
     try {
       setDetailLoading(true);
-      const res = await getRebalanceDetail(id);
-      setDetail(res.data);
+      const [detailRes, snapshotRes] = await Promise.all([
+        getRebalanceDetail(id),
+        getRebalanceSnapshot(id),
+      ]);
+      setDetail(detailRes.data);
+      setSnapshot(snapshotRes.data);
     } catch {
       setDetail(null);
+      setSnapshot(null);
     } finally {
       setDetailLoading(false);
     }
   };
-
   const handleSelectRebalance = async (id: string) => {
     setSelectedId(id);
     await fetchDetail(id);
@@ -285,7 +290,7 @@ export function StrategiesPage() {
                       <TooltipContent className="max-w-md">
                         <p className="font-semibold mb-1.5">편입 결과</p>
                         <p className="text-gray-300 leading-relaxed">목표 대비 실제 반영된 비율이에요.</p>
-                        <p className="text-gray-300 leading-relaxed mt-1.5">새로 산 종목과 계속 들고이 ㅆ는 종목을 합쳐서 봐요.</p>
+                        <p className="text-gray-300 leading-relaxed mt-1.5">새로 산 종목과 계속 보유중인 종목을 합쳐서 봐요.</p>
                       </TooltipContent>
                     </UITooltip>
                   </div>
@@ -325,7 +330,7 @@ export function StrategiesPage() {
                   </TooltipTrigger>
                   <TooltipContent className="max-w-md">
                     <p className="font-semibold mb-1.5">자본 활용도</p>
-                    <p className="text-gray-300 leading-relaxed">계좌 전체 자산 중 이 전략의 비중이에요.</p>
+                    <p className="text-gray-300 leading-relaxed">계좌 전체 자산 중 전략에 사용중인 자산의 비중이에요.</p>
                     <p className="text-gray-300 leading-relaxed mt-1.5">여러 전략을 굴릴 때 자산 배분을 확인할 수 있어요.</p>
                   </TooltipContent>
                 </UITooltip>
