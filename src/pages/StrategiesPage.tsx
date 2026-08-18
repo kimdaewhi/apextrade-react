@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/ui/card";
 import {
   BarChart,
@@ -20,15 +20,27 @@ import {
   TrendingUp,
   TrendingDown,
   Inbox,
+  Loader2,
   LineChart as LineChartIcon,
 } from "lucide-react";
 
+import { getDashboard } from "../api/AccountApi";
+import { getMarketSummary } from "../api/MarketApi";
+import { getPerformance } from "../api/MetricsApi";
+import type { AccountDashboardDto } from "../types/Account";
+import type { MarketIndexDto } from "../types/Market";
+import type { PerformanceDto } from "../types/Metrics";
+
 /* ════════════════════════════════════════════════
-   타입 — API 응답 스펙
+   화면 모델
+
+   API 응답(DTO)을 그대로 쓰지 않고 한 번 변환한다.
+   - 계좌 응답은 숫자가 문자열로 내려온다
+   - 시장 지수 카드는 market + metrics 두 응답을 합쳐야 완성된다
+   - 화면이 쓰는 파생값(현금 비중, 평가손익률)은 응답에 없다
 
    모든 숫자 필드는 null 을 허용한다.
-   BE 가 값을 못 주는 상황(표본 부족, 집계 실패)과
-   0 을 화면에서 반드시 구분하기 위함.
+   값을 못 받은 상황과 0 을 화면에서 반드시 구분하기 위함.
    ════════════════════════════════════════════════ */
 
 type Num = number | null;
@@ -75,6 +87,7 @@ interface StrategyData {
   mddCurrentDays: Num;
   isRecovered: boolean | null;
 
+  winRate: Num;
   winCount: Num;
   periodCount: Num;
   avgWin: Num;
@@ -109,103 +122,25 @@ interface DashboardData {
 const NAV_MIN_DAYS = 5;
 
 /* ════════════════════════════════════════════════
-   샘플 데이터 — API 연동 시 통째로 교체
-   ════════════════════════════════════════════════ */
-
-const SAMPLE: DashboardData = {
-  updatedAt: "2026.09.09 15:40",
-
-  market: {
-    kospi: { name: "KOSPI", value: 7015.2, changeRate: -0.24, periodReturn: 2.96 },
-    kosdaq: { name: "KOSDAQ", value: 881.44, changeRate: -0.51, periodReturn: 1.85 },
-  },
-
-  account: {
-    totalAsset: 10455300,
-    stockValue: 9704790,
-    cash: 750510,
-    cashRatio: 7.18,
-    purchaseAmount: 9696970,
-    evalProfit: 7820,
-    evalProfitRate: 0.08,
-  },
-
-  holdings: [
-    { code: "073240", name: "금호타이어", qty: 158, avgPrice: 7840, currentPrice: 8080 },
-    { code: "005850", name: "에스엘", qty: 21, avgPrice: 58561, currentPrice: 58800 },
-    { code: "007070", name: "GS리테일", qty: 47, avgPrice: 26535, currentPrice: 26550 },
-    { code: "353200", name: "대덕전자", qty: 10, avgPrice: 115300, currentPrice: 115100 },
-    { code: "003230", name: "삼양식품", qty: 1, avgPrice: 1209000, currentPrice: 1206000 },
-    { code: "161890", name: "한국콜마", qty: 9, avgPrice: 133500, currentPrice: 133100 },
-    { code: "006360", name: "GS건설", qty: 34, avgPrice: 36335, currentPrice: 36100 },
-    { code: "103590", name: "일진전기", qty: 16, avgPrice: 73900, currentPrice: 72700 },
-  ],
-
-  strategy: {
-    startDate: "2026.08.13",
-    endDate: "2026.09.09",
-    rebalanceCount: 2,
-
-    periodReturn: 4.2,
-    periodProfit: 421836,
-    benchmarkReturn: 2.96,
-    excessReturn: 1.24,
-
-    maxDrawdown: 2.86,
-    mddMaxDays: 9,
-    mddCurrentDays: 2,
-    isRecovered: false,
-
-    winCount: 2,
-    periodCount: 2,
-    avgWin: 2.09,
-
-    totalBuyValue: 15240800,
-    totalSellValue: 5483200,
-
-    cagr: 74.5,
-    volatility: 18.4,
-    sharpeRatio: 2.31,
-    alpha: 12.8,
-    turnoverRate: 148.6,
-    profitFactor: 2.14,
-  },
-
-  navSeries: [
-    { date: "08.13", nav: 10033464, benchmark: 6813.34 },
-    { date: "08.14", nav: 10160134, benchmark: 6883.72 },
-    { date: "08.17", nav: 10205600, benchmark: 6921.4 },
-    { date: "08.18", nav: 10142300, benchmark: 6874.1 },
-    { date: "08.19", nav: 10287900, benchmark: 6952.8 },
-    { date: "08.20", nav: 10331200, benchmark: 6988.3 },
-    { date: "08.21", nav: 10298700, benchmark: 6961.5 },
-    { date: "08.24", nav: 10412500, benchmark: 7024.6 },
-    { date: "08.25", nav: 10488300, benchmark: 7068.9 },
-    { date: "08.26", nav: 10390100, benchmark: 7001.2 },
-    { date: "08.27", nav: 10245800, benchmark: 6912.7 },
-    { date: "08.28", nav: 10188400, benchmark: 6870.4 },
-    { date: "08.31", nav: 10251900, benchmark: 6908.9 },
-    { date: "09.01", nav: 10334600, benchmark: 6957.3 },
-    { date: "09.02", nav: 10298200, benchmark: 6931.8 },
-    { date: "09.03", nav: 10402700, benchmark: 6989.4 },
-    { date: "09.04", nav: 10448900, benchmark: 7020.1 },
-    { date: "09.07", nav: 10521800, benchmark: 7058.6 },
-    { date: "09.08", nav: 10487400, benchmark: 7032.2 },
-    { date: "09.09", nav: 10455300, benchmark: 7015.2 },
-  ],
-};
-
-/* ════════════════════════════════════════════════
    null-safe 유틸
-
-   포맷터는 값이 없으면 null 을 돌려준다.
-   StatCard 는 value 가 null 이면 대기 상태로 렌더하므로
-   호출부에서 별도 분기를 하지 않아도 된다.
    ════════════════════════════════════════════════ */
 
 /** null / undefined / NaN 을 한 번에 걸러낸다 */
 function has(v: number | null | undefined): v is number {
   return v !== null && v !== undefined && Number.isFinite(v);
+}
+
+/** 문자열로 내려오는 금액을 숫자로. 변환 불가면 null */
+function toNum(v: string | number | null | undefined): Num {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** 분모가 0 이거나 값이 없으면 null */
+function ratio(numerator: Num, denominator: Num): Num {
+  if (!has(numerator) || !has(denominator) || denominator === 0) return null;
+  return (numerator / denominator) * 100;
 }
 
 const won = (v: Num | undefined) =>
@@ -249,6 +184,136 @@ const CASH_COLOR = "#D8DDE4";
 /** 벤치마크 지수 색 — 도넛 팔레트에서 가져와 톤을 맞춘다 */
 const KOSPI_COLOR = "#7C6BF0";
 const KOSDAQ_COLOR = "#3FA6A0";
+
+/* ════════════════════════════════════════════════
+   DTO → 화면 모델 변환
+   ════════════════════════════════════════════════ */
+
+/** "2026-08-13" → "2026.08.13" */
+function formatDate(v: string | null): string | null {
+  return v ? v.replaceAll("-", ".") : null;
+}
+
+/** "2026-08-13" → "08.13" (차트 X축용) */
+function formatShortDate(v: string): string {
+  return v.length >= 10 ? v.slice(5).replace("-", ".") : v;
+}
+
+/**
+ * 지수 카드는 두 응답을 합쳐야 완성된다.
+ * - value / changeRate : /market/summary (전일 대비)
+ * - periodReturn       : /metrics/performance (전략과 같은 구간)
+ */
+function mapMarket(
+  indices: MarketIndexDto[] | null,
+  perf: PerformanceDto | null
+): DashboardData["market"] {
+  const find = (name: string) =>
+    indices?.find((i) => i.name.toUpperCase() === name) ?? null;
+
+  const build = (
+    name: string,
+    dto: MarketIndexDto | null,
+    periodReturn: Num
+  ): MarketIndex | null => {
+    if (!dto && !has(periodReturn)) return null;
+    return {
+      name,
+      value: toNum(dto?.close_price),
+      changeRate: toNum(dto?.change_rate),
+      periodReturn,
+    };
+  };
+
+  return {
+    kospi: build("KOSPI", find("KOSPI"), perf?.returns.benchmark_return ?? null),
+    kosdaq: build(
+      "KOSDAQ",
+      find("KOSDAQ"),
+      perf?.returns.benchmark_kosdaq_return ?? null
+    ),
+  };
+}
+
+function mapAccount(dash: AccountDashboardDto | null): AccountData | null {
+  const s = dash?.account_summary;
+  if (!s) return null;
+
+  const totalAsset = toNum(s.total_evaluation_amount);
+  const cash = toNum(s.settlement_cash_amount);
+  const purchaseAmount = toNum(s.total_purchase_amount);
+  const evalProfit = toNum(s.total_profit_loss_amount);
+
+  return {
+    totalAsset,
+    stockValue: toNum(s.stock_evaluation_amount),
+    cash,
+    cashRatio: ratio(cash, totalAsset),
+    purchaseAmount,
+    evalProfit,
+    evalProfitRate: ratio(evalProfit, purchaseAmount),
+  };
+}
+
+function mapHoldings(dash: AccountDashboardDto | null): Holding[] {
+  return (dash?.holding_list ?? []).map((h) => ({
+    code: h.stock_code,
+    name: h.stock_name,
+    qty: toNum(h.holding_qty) ?? 0,
+    avgPrice: toNum(h.avg_buy_price),
+    currentPrice: toNum(h.current_price),
+  }));
+}
+
+function mapStrategy(perf: PerformanceDto | null): StrategyData | null {
+  if (!perf) return null;
+
+  const { period, returns, risk, trading, turnover } = perf;
+
+  // 승률은 비율로만 내려오므로 구간 수를 곱해 건수를 복원한다
+  const winCount = has(trading.win_rate)
+    ? Math.round((trading.win_rate / 100) * trading.period_count)
+    : null;
+
+  return {
+    startDate: formatDate(period.start),
+    endDate: formatDate(period.end),
+    rebalanceCount: period.rebalance_count,
+
+    periodReturn: returns.total_return,
+    periodProfit: returns.period_profit,
+    benchmarkReturn: returns.benchmark_return,
+    excessReturn: returns.excess_return,
+
+    maxDrawdown: risk.max_drawdown,
+    mddMaxDays: risk.mdd_max_days,
+    mddCurrentDays: risk.mdd_current_days,
+    isRecovered: risk.is_recovered,
+
+    winRate: trading.win_rate,
+    winCount,
+    periodCount: trading.period_count,
+    avgWin: trading.avg_win,
+
+    totalBuyValue: turnover.total_buy_value,
+    totalSellValue: turnover.total_sell_value,
+
+    cagr: returns.cagr,
+    volatility: risk.volatility,
+    sharpeRatio: risk.sharpe_ratio,
+    alpha: returns.alpha_vs_benchmark,
+    turnoverRate: turnover.turnover_rate,
+    profitFactor: trading.profit_factor,
+  };
+}
+
+function mapNavSeries(perf: PerformanceDto | null): NavPoint[] {
+  return (perf?.nav_series ?? []).map((p) => ({
+    date: formatShortDate(p.date),
+    nav: p.nav,
+    benchmark: p.benchmark,
+  }));
+}
 
 /* ════════════════════════════════════════════════
    공통 컴포넌트
@@ -358,9 +423,9 @@ function IndexBox({ index }: { index: MarketIndex | null }) {
   );
 }
 
-function MarketSection() {
-  const market = SAMPLE.market;
-  const s = SAMPLE.strategy;
+function MarketSection({ data }: { data: DashboardData }) {
+  const market = data.market;
+  const s = data.strategy;
 
   return (
     <Card className="p-5 bg-white shadow-sm">
@@ -396,9 +461,9 @@ function MarketSection() {
    2. 내 자산 — 자산 구성 도넛 + 지표 카드
    ════════════════════════════════════════════════ */
 
-function AssetDonutCard() {
-  const a = SAMPLE.account;
-  const holdings = SAMPLE.holdings ?? [];
+function AssetDonutCard({ data }: { data: DashboardData }) {
+  const a = data.account;
+  const holdings = data.holdings ?? [];
 
   const slices = [
     ...holdings
@@ -507,16 +572,16 @@ function AssetDonutCard() {
   );
 }
 
-function AssetSection() {
-  const a = SAMPLE.account;
-  const holdingCount = SAMPLE.holdings?.length ?? 0;
+function AssetSection({ data }: { data: DashboardData }) {
+  const a = data.account;
+  const holdingCount = data.holdings?.length ?? 0;
 
   return (
     <div>
       <SectionTitle title="내 자산" />
 
       <div className="grid grid-cols-3 gap-4 items-stretch">
-        <AssetDonutCard />
+        <AssetDonutCard data={data} />
 
         <div className="col-span-2 grid grid-cols-2 gap-4">
           <StatCard
@@ -599,12 +664,12 @@ function RankCard({
   );
 }
 
-function HoldingsSection() {
+function HoldingsSection({ data }: { data: DashboardData }) {
   const [mode, setMode] = useState<ChartMode>("rate");
 
-  const totalAsset = SAMPLE.account?.totalAsset;
+  const totalAsset = data.account?.totalAsset;
 
-  const rows: HoldingRow[] = (SAMPLE.holdings ?? [])
+  const rows: HoldingRow[] = (data.holdings ?? [])
     .map((h) => {
       const priced = has(h.currentPrice) && has(h.avgPrice);
       const evalAmount = has(h.currentPrice) ? h.currentPrice * h.qty : null;
@@ -825,10 +890,9 @@ function HoldingsSection() {
    4-1. 자산 추이
    ════════════════════════════════════════════════ */
 
-function NavTrendCard() {
-  const points = (SAMPLE.navSeries ?? []).filter(
-    (d) => has(d.nav) && has(d.benchmark)
-  );
+function NavTrendCard({ data }: { data: DashboardData }) {
+  // NAV 는 필수, 벤치마크는 없는 날이 있어도 선을 끊어서 그린다
+  const points = (data.navSeries ?? []).filter((d) => has(d.nav));
 
   if (points.length < NAV_MIN_DAYS) {
     const progress = Math.min((points.length / NAV_MIN_DAYS) * 100, 100);
@@ -858,26 +922,32 @@ function NavTrendCard() {
   }
 
   // 시작점을 100 으로 정규화해 전략과 지수를 같은 축에서 비교한다
-  const base = points[0];
-  const baseNav = base.nav as number;
-  const baseBm = base.benchmark as number;
+  const baseNav = points[0].nav as number;
+  const baseBm = points.find((p) => has(p.benchmark))?.benchmark ?? null;
 
-  if (baseNav <= 0 || baseBm <= 0) {
+  if (baseNav <= 0) {
     return (
       <Card className="p-5 bg-gray-50/60 shadow-sm">
         <p className="text-sm font-medium text-gray-500">자산 추이</p>
-        <EmptyState message="기준일 데이터가 올바르지 않습니다" height={240} icon="chart" />
+        <EmptyState
+          message="기준일 데이터가 올바르지 않습니다"
+          height={240}
+          icon="chart"
+        />
       </Card>
     );
   }
 
-  const data = points.map((d) => ({
+  const data2 = points.map((d) => ({
     date: d.date,
     전략: ((d.nav as number) / baseNav) * 100,
-    KOSPI: ((d.benchmark as number) / baseBm) * 100,
+    KOSPI:
+      has(d.benchmark) && has(baseBm) && baseBm > 0
+        ? (d.benchmark / baseBm) * 100
+        : null,
   }));
 
-  const last = data[data.length - 1];
+  const last = data2[data2.length - 1];
 
   return (
     <Card className="p-5 bg-white shadow-sm">
@@ -895,15 +965,19 @@ function NavTrendCard() {
               {last.전략.toFixed(1)}
             </span>
           </span>
-          <span className="text-gray-500">
-            KOSPI{" "}
-            <span className="font-bold text-gray-700">{last.KOSPI.toFixed(1)}</span>
-          </span>
+          {has(last.KOSPI) && (
+            <span className="text-gray-500">
+              KOSPI{" "}
+              <span className="font-bold text-gray-700">
+                {last.KOSPI.toFixed(1)}
+              </span>
+            </span>
+          )}
         </div>
       </div>
 
       <ResponsiveContainer width="100%" height={240}>
-        <LineChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
+        <LineChart data={data2} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis dataKey="date" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
           <YAxis
@@ -925,6 +999,7 @@ function NavTrendCard() {
             strokeWidth={1.5}
             strokeDasharray="4 3"
             dot={false}
+            connectNulls
           />
         </LineChart>
       </ResponsiveContainer>
@@ -936,55 +1011,50 @@ function NavTrendCard() {
    4-2. 수익률 비교 막대
    ════════════════════════════════════════════════ */
 
-function ReturnCompareCard() {
-  const s = SAMPLE.strategy;
-  const m = SAMPLE.market;
+function ReturnCompareCard({ data }: { data: DashboardData }) {
+  const s = data.strategy;
+  const m = data.market;
 
   const bars = [
-    {
-      label: "전략",
-      value: s?.periodReturn ?? null,
-      color: has(s?.periodReturn) && (s?.periodReturn as number) >= 0 ? UP : DOWN,
-      primary: true,
-    },
-    {
-      label: m?.kospi?.name ?? "KOSPI",
-      value: m?.kospi?.periodReturn ?? null,
-      color: KOSPI_COLOR,
-      primary: false,
-    },
-    {
-      label: m?.kosdaq?.name ?? "KOSDAQ",
-      value: m?.kosdaq?.periodReturn ?? null,
-      color: KOSDAQ_COLOR,
-      primary: false,
-    },
+    { label: "전략", value: s?.periodReturn ?? null, primary: true },
+    { label: m?.kospi?.name ?? "KOSPI", value: m?.kospi?.periodReturn ?? null, primary: false },
+    { label: m?.kosdaq?.name ?? "KOSDAQ", value: m?.kosdaq?.periodReturn ?? null, primary: false },
   ].filter((b) => has(b.value));
 
   if (bars.length === 0) {
     return (
       <Card className="p-5 bg-gray-50/60 shadow-sm flex flex-col">
-        <p className="text-sm font-medium text-gray-500">수익률 비교</p>
+        <p className="text-sm font-medium text-gray-500">기간 수익률 비교</p>
         <EmptyState message="비교할 수익률이 없습니다" height={180} />
       </Card>
     );
   }
 
+  // 0 을 중심으로 좌우 대칭. 최대 절댓값이 반쪽을 꽉 채운다.
   const max = Math.max(...bars.map((b) => Math.abs(b.value as number)), 0.01);
+  const excess = s?.excessReturn ?? null;
 
   return (
     <Card className="p-5 bg-white shadow-sm flex flex-col">
-      <p className="text-sm font-medium text-gray-700 mb-4">수익률 비교</p>
+      <div className="flex items-baseline justify-between mb-1">
+        <p className="text-sm font-medium text-gray-700">기간 수익률 비교</p>
+        {s?.startDate && (
+          <span className="text-xs text-gray-400">{s.startDate} 이후</span>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 mb-4">
+        상단 지수 카드는 전일 대비 등락률입니다
+      </p>
 
       <div className="flex-1 flex flex-col justify-center gap-4">
-        {bars.map((b) => (
-          <div key={b.label}>
-            <div className="flex justify-between items-baseline mb-1.5">
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: b.color }}
-                />
+        {bars.map((b) => {
+          const value = b.value as number;
+          const width = (Math.abs(value) / max) * 50;   // 반쪽 기준
+          const up = value >= 0;
+
+          return (
+            <div key={b.label}>
+              <div className="flex justify-between items-baseline mb-1.5">
                 <span
                   className={`text-xs ${
                     b.primary ? "text-gray-900 font-medium" : "text-gray-500"
@@ -992,31 +1062,37 @@ function ReturnCompareCard() {
                 >
                   {b.label}
                 </span>
+                <span
+                  className={`text-sm font-bold ${
+                    b.primary ? toneClass(value) : "text-gray-700"
+                  }`}
+                >
+                  {pct(value)}
+                </span>
               </div>
-              <span
-                className={`text-sm font-bold ${
-                  b.primary ? toneClass(b.value) : "text-gray-700"
-                }`}
-              >
-                {pct(b.value)}
-              </span>
+
+              <div className="relative h-2 bg-gray-100 rounded-full">
+                {/* 0 기준선 */}
+                <div className="absolute left-1/2 -top-0.5 -bottom-0.5 w-px bg-gray-900/40 z-10" />
+                <div
+                  className={`absolute top-0 bottom-0 transition-all ${
+                    up ? "left-1/2 rounded-r-full" : "right-1/2 rounded-l-full"
+                  } ${b.primary ? "opacity-100" : "opacity-45"}`}
+                  style={{
+                    width: `${width}%`,
+                    backgroundColor: up ? UP : DOWN,
+                  }}
+                />
+              </div>
             </div>
-            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all"
-                style={{
-                  width: `${(Math.abs(b.value as number) / max) * 100}%`,
-                  backgroundColor: b.color,
-                }}
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {has(s?.excessReturn) && (
+      {has(excess) && (
         <p className="text-xs text-gray-400 mt-4 pt-3 border-t border-gray-100">
-          전략이 KOSPI보다 {pct(s?.excessReturn)}p 앞섭니다
+          전략이 KOSPI보다 {Math.abs(excess).toFixed(2)}%p{" "}
+          {excess >= 0 ? "앞섭니다" : "뒤집니다"}
         </p>
       )}
     </Card>
@@ -1058,25 +1134,22 @@ function strategySubText(s: StrategyData | null): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-function StrategySection() {
-  const s = SAMPLE.strategy;
+function StrategySection({ data }: { data: DashboardData }) {
+  const s = data.strategy;
 
-  const winRate =
-    has(s?.winCount) && has(s?.periodCount) && (s?.periodCount as number) > 0
-      ? `${(((s?.winCount as number) / (s?.periodCount as number)) * 100).toFixed(0)}%`
-      : null;
+  const winRate = has(s?.winRate) ? `${s.winRate.toFixed(0)}%` : null;
 
   return (
     <div>
       <SectionTitle title="전략 성과" sub={strategySubText(s ?? null)} />
 
       <div className="mb-4">
-        <NavTrendCard />
+        <NavTrendCard data={data} />
       </div>
 
       {/* 비교 막대 + 주요 지표 */}
       <div className="grid grid-cols-3 gap-4 items-stretch">
-        <ReturnCompareCard />
+        <ReturnCompareCard data={data} />
 
         <div className="col-span-2 grid grid-cols-2 gap-4">
           <StatCard
@@ -1087,7 +1160,7 @@ function StrategySection() {
           />
           <StatCard
             label="초과수익"
-            value={orUndef(pct(s?.excessReturn)) ? `${pct(s?.excessReturn)}p` : null}
+            value={has(s?.excessReturn) ? `${pct(s?.excessReturn)}` : null}
             sub={orUndef(
               has(s?.benchmarkReturn) ? `KOSPI ${pct(s?.benchmarkReturn)}` : null
             )}
@@ -1104,8 +1177,8 @@ function StrategySection() {
             label="승률"
             value={winRate}
             sub={
-              winRate
-                ? `${s?.periodCount}구간 중 ${s?.winCount}구간 수익`
+              winRate && has(s?.periodCount) && has(s?.winCount)
+                ? `${s.periodCount}구간 중 ${s.winCount}구간 수익`
                 : "리밸런싱 1회 이상 필요"
             }
           />
@@ -1118,14 +1191,14 @@ function StrategySection() {
           compact
           label="연평균 수익률"
           value={pct(s?.cagr)}
-          sub={has(s?.cagr) ? "복리 환산" : "1개월 이상 필요"}
+          sub={has(s?.cagr) ? "복리 환산" : "3개월 이상 필요"}
           tone={s?.cagr}
         />
         <StatCard
           compact
           label="손익비"
           value={has(s?.profitFactor) ? (s?.profitFactor as number).toFixed(2) : null}
-          sub={has(s?.profitFactor) ? "이익 ÷ 손실" : "손실 구간 발생 후 산출"}
+          sub={has(s?.profitFactor) ? "이익 ÷ 손실" : "이익·손실 구간 모두 필요"}
         />
         <StatCard
           compact
@@ -1139,19 +1212,19 @@ function StrategySection() {
           compact
           label="변동성"
           value={has(s?.volatility) ? `${(s?.volatility as number).toFixed(1)}%` : null}
-          sub={has(s?.volatility) ? "연율 환산" : "일별 데이터 5일 이상 필요"}
+          sub={has(s?.volatility) ? "연율 환산" : "일별 데이터 30일 이상 필요"}
         />
         <StatCard
           compact
           label="샤프 지수"
           value={has(s?.sharpeRatio) ? (s?.sharpeRatio as number).toFixed(2) : null}
-          sub={has(s?.sharpeRatio) ? "위험 대비 수익" : "일별 데이터 5일 이상 필요"}
+          sub={has(s?.sharpeRatio) ? "위험 대비 수익" : "일별 데이터 30일 이상 필요"}
         />
         <StatCard
           compact
           label="알파"
           value={pct(s?.alpha)}
-          sub={has(s?.alpha) ? "KOSPI 대비 초과" : "1개월 이상 필요"}
+          sub={has(s?.alpha) ? "KOSPI 대비 초과" : "3개월 이상 필요"}
           tone={s?.alpha}
         />
       </div>
@@ -1163,25 +1236,113 @@ function StrategySection() {
    페이지
    ════════════════════════════════════════════════ */
 
+const EMPTY_DATA: DashboardData = {
+  updatedAt: null,
+  market: null,
+  account: null,
+  holdings: null,
+  strategy: null,
+  navSeries: null,
+};
+
+function formatUpdatedAt(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(
+    d.getHours()
+  )}:${p(d.getMinutes())}`;
+}
+
 export function StrategiesPage() {
+  const [data, setData] = useState<DashboardData>(EMPTY_DATA);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // 지수·성과는 실패해도 계좌 정보는 보여준다
+      const [dashRes, marketRes, perfRes] = await Promise.allSettled([
+        getDashboard(),
+        getMarketSummary(),
+        getPerformance(),
+      ]);
+
+      if (dashRes.status === "rejected") throw dashRes.reason;
+
+      const dash = dashRes.value.data;
+      const indices =
+        marketRes.status === "fulfilled" ? marketRes.value.data : null;
+      const perf = perfRes.status === "fulfilled" ? perfRes.value.data : null;
+
+      setData({
+        updatedAt: formatUpdatedAt(new Date()),
+        market: mapMarket(indices, perf),
+        account: mapAccount(dash),
+        holdings: mapHoldings(dash),
+        strategy: mapStrategy(perf),
+        navSeries: mapNavSeries(perf),
+      });
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail ||
+          err?.message ||
+          "데이터를 불러오지 못했습니다."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  if (loading && data.updatedAt === null) {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <Loader2 className="animate-spin text-gray-400" size={36} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <p className="text-gray-500">{error}</p>
+        <button
+          onClick={fetchAll}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+        >
+          <RefreshCw size={16} /> 다시 시도
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 space-y-8 bg-gray-50 min-h-screen">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">운용 현황</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {SAMPLE.updatedAt ? `${SAMPLE.updatedAt} 기준` : "갱신 시각 확인 중"}
+            {data.updatedAt ? `${data.updatedAt} 기준` : "갱신 시각 확인 중"}
           </p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-          <RefreshCw size={16} /> 새로고침
+        <button
+          onClick={fetchAll}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> 새로고침
         </button>
       </div>
 
-      <MarketSection />
-      <AssetSection />
-      <HoldingsSection />
-      <StrategySection />
+      <MarketSection data={data} />
+      <AssetSection data={data} />
+      <HoldingsSection data={data} />
+      <StrategySection data={data} />
     </div>
   );
 }
