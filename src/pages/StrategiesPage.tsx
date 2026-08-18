@@ -660,6 +660,9 @@ function HoldingsSection() {
                     No.
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
+                    종목코드
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                     종목명
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
@@ -694,6 +697,7 @@ function HoldingsSection() {
                       <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
                         {i + 1}
                       </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{r.code}</td>
                       <td className="px-4 py-3 text-sm text-gray-900">{r.name}</td>
                       <td className="px-4 py-3 text-sm text-right text-gray-600">
                         {r.qty}주
