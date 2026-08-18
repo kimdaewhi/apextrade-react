@@ -1160,7 +1160,7 @@ function StrategySection({ data }: { data: DashboardData }) {
           />
           <StatCard
             label="초과수익"
-            value={has(s?.excessReturn) ? `${pct(s?.excessReturn)}` : null}
+            value={has(s?.excessReturn) ? `${pct(s?.excessReturn)}p` : null}
             sub={orUndef(
               has(s?.benchmarkReturn) ? `KOSPI ${pct(s?.benchmarkReturn)}` : null
             )}
