@@ -39,6 +39,19 @@ import type {
 // 포맷 헬퍼
 // ══════════════════════════════════════════
 
+// ⚙️ 오늘 날짜를 yyyy.mm.dd 형식으로 반환 (KST 기준)
+const formatToday = (): string =>
+  new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(new Date())
+    .replace(/\.\s?$/, "")
+    .replace(/\.\s/g, ".");
+const todayLabel = formatToday();
+
 const formatNumber = (value: string | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return "-";
   const num = Number(value);
@@ -338,9 +351,12 @@ export function DashboardPage() {
 
         {/* ══════════════ 2. 오늘의 거래 ══════════════ */}
         <Card className="p-6 shadow-sm">
-          <div className="flex items-center gap-2 mb-4">
-            <ArrowLeftRight className="text-gray-500" size={18} />
-            <h3 className="text-base font-semibold text-gray-900">당일 거래</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <ArrowLeftRight className="text-gray-500" size={18} />
+              <h3 className="text-base font-semibold text-gray-900">당일 거래</h3>
+            </div>
+            <span className="text-sm text-gray-400">{todayLabel} 기준</span>
           </div>
           {balanceState.loading ? (
             <SectionLoading />
